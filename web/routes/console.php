@@ -34,7 +34,7 @@ Artisan::command('admin:make {email}', function (string $email) {
     $this->info("{$email} is now an admin.");
 })->purpose('Give a user admin (moderation) access and optionally reset their password');
 
-// Needs the server cron entry from DEPLOY.md:  * * * * * php artisan schedule:run
-// With LINK_CHECKER=python the Python fetcher (fetcher/) runs the check instead.
+// Run by the `scheduler` container (php artisan schedule:work); no server crontab needed.
+// Docker Compose sets LINK_CHECKER=python, so the fetcher's check_links runs the check instead.
 Schedule::command('postings:check')->dailyAt('03:30')->withoutOverlapping()
     ->when(fn () => config('services.ingest.link_checker') !== 'python');
