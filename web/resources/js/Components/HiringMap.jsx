@@ -59,6 +59,31 @@ function BuildingIcon() {
     );
 }
 
+function FilterGroup({ title, children }) {
+    return (
+        <div className="fs-group">
+            <h3>{title}</h3>
+            <div className="opts">{children}</div>
+        </div>
+    );
+}
+
+// Tap-to-pick options for one filter; "Any"/"All" clears it.
+function Options({ value, options, anyLabel, onChange }) {
+    return (
+        <>
+            <button type="button" className={`opt ${value ? '' : 'on'}`} aria-pressed={!value} onClick={() => onChange('')}>
+                {anyLabel}
+            </button>
+            {options.map((o) => (
+                <button key={o} type="button" className={`opt ${value === o ? 'on' : ''}`} aria-pressed={value === o} onClick={() => onChange(value === o ? '' : o)}>
+                    {o}
+                </button>
+            ))}
+        </>
+    );
+}
+
 function toLPA(n) {
     return (n / 100000).toFixed(1).replace(/\.0$/, '');
 }
@@ -106,6 +131,7 @@ export default function HiringMap({ companies, areas, sectors, types, experience
     const [filters, setFilters] = useState(EMPTY_FILTERS);
     const [selectedId, setSelectedId] = useState(null);
     const [railOpenMobile, setRailOpenMobile] = useState(false);
+    const [filtersOpen, setFiltersOpen] = useState(false);
     const [showIdle, setShowIdle] = useState(true);
     const areaLabels = useMemo(() => Object.fromEntries(areas.map((a) => [a.key, a.label])), [areas]);
 
@@ -327,15 +353,16 @@ export default function HiringMap({ companies, areas, sectors, types, experience
     }, [visibleCompanies, jobsOf, selectedId, showIdle, areaLabels]);
 
     useEffect(() => {
-        if (!selectedId && !railOpenMobile) return;
+        if (!selectedId && !railOpenMobile && !filtersOpen) return;
         const onKey = (e) => {
             if (e.key !== 'Escape') return;
             setSelectedId(null);
             setRailOpenMobile(false);
+            setFiltersOpen(false);
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [selectedId, railOpenMobile]);
+    }, [selectedId, railOpenMobile, filtersOpen]);
 
     function flyToArea(row) {
         const map = mapRef.current;
@@ -366,117 +393,208 @@ export default function HiringMap({ companies, areas, sectors, types, experience
         setFilters((f) => ({ ...f, [key]: !f[key] }));
     }
 
+    // Sheet filters shown as removable pills in the phone's chip row
+    const sheetPills = [
+        filters.exp && { key: 'exp', label: filters.exp },
+        filters.sector && { key: 'sector', label: filters.sector },
+        filters.type && { key: 'type', label: filters.type },
+        filters.area && { key: 'area', label: areaLabels[filters.area] ?? filters.area },
+    ].filter(Boolean);
+    const sheetFilterCount = [filters.exp, filters.sector, filters.type].filter(Boolean).length;
+
     return (
-        <div className="flex h-full flex-col">
-            {/* search + live status row */}
-            <div
-                className="flex flex-wrap items-center gap-3 border-b px-4 py-2.5"
-                style={{ borderColor: 'var(--edge)', background: 'var(--bg)' }}
-            >
-                <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--mute)' }}>
-                    <span className="pulse-dot" />
-                    <span>
-                        {totalJobs} open role{totalJobs === 1 ? '' : 's'} · {totalInterns} internship{totalInterns === 1 ? '' : 's'}
-                    </span>
-                </div>
-                <span className="flex-1" />
-                <div className="q-wrap w-full sm:w-72">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-                        <circle cx="11" cy="11" r="7" />
-                        <path d="m20 20-3.5-3.5" />
-                    </svg>
-                    <input
-                        className="q w-full"
-                        type="search"
-                        placeholder="Search role, skill or company…"
-                        value={filters.q}
-                        onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
-                        onKeyDown={(e) => e.key === 'Escape' && setFilters((f) => ({ ...f, q: '' }))}
-                        aria-label="Search"
-                    />
-                    {filters.q && (
-                        <button
-                            type="button"
-                            className="q-clear"
-                            onClick={() => setFilters((f) => ({ ...f, q: '' }))}
-                            aria-label="Clear search"
-                        >
-                            ✕
-                        </button>
-                    )}
-                </div>
-                <Link href={route('submit')} className="ghost">
-                    <span aria-hidden="true" className="text-base leading-none" style={{ color: 'var(--marigold)' }}>+</span>
-                    Add an opening
-                </Link>
-            </div>
-
-            {/* filter chips */}
-            <div
-                className="flex flex-wrap items-center gap-1.5 border-b px-4 py-2.5"
-                style={{ borderColor: 'var(--edge)', background: 'var(--bg)' }}
-            >
-                {CHIPS.map((chip) => (
+        <div className="khm-maproot flex h-full flex-col">
+            {/* search + live status row (floats over the map on phones) */}
+            <div className="khm-toolbar">
+                <div className="tb-row">
+                    <div className="tb-status">
+                        <span className="pulse-dot" />
+                        <span>
+                            {totalJobs} open role{totalJobs === 1 ? '' : 's'} · {totalInterns} internship{totalInterns === 1 ? '' : 's'}
+                        </span>
+                    </div>
+                    <span className="tb-gap" />
+                    <div className="q-wrap tb-search">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+                            <circle cx="11" cy="11" r="7" />
+                            <path d="m20 20-3.5-3.5" />
+                        </svg>
+                        <input
+                            className="q w-full"
+                            type="search"
+                            placeholder="Search role, skill or company…"
+                            value={filters.q}
+                            onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+                            onKeyDown={(e) => e.key === 'Escape' && setFilters((f) => ({ ...f, q: '' }))}
+                            aria-label="Search"
+                        />
+                        {filters.q && (
+                            <button
+                                type="button"
+                                className="q-clear"
+                                onClick={() => setFilters((f) => ({ ...f, q: '' }))}
+                                aria-label="Clear search"
+                            >
+                                ✕
+                            </button>
+                        )}
+                    </div>
                     <button
-                        key={chip.key}
                         type="button"
-                        className={`chip ${filters[chip.key] ? 'on' : ''}`}
-                        data-k={chip.key}
-                        aria-pressed={filters[chip.key]}
-                        onClick={() => toggleChip(chip.key)}
+                        className={`filter-btn ${sheetFilterCount ? 'on' : ''}`}
+                        onClick={() => {
+                            setFiltersOpen(true);
+                            setRailOpenMobile(false);
+                            setSelectedId(null);
+                        }}
+                        aria-label={`Filters${sheetFilterCount ? ` (${sheetFilterCount} on)` : ''}`}
                     >
-                        <span className="dot" aria-hidden="true" />
-                        {chip.label}
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0" />
+                            <circle cx="16" cy="6" r="2" />
+                            <circle cx="10" cy="12" r="2" />
+                            <circle cx="18" cy="18" r="2" />
+                        </svg>
+                        {sheetFilterCount > 0 && <span className="badge">{sheetFilterCount}</span>}
                     </button>
-                ))}
-
-                <select
-                    className={`khm-select ${filters.sector ? 'set' : ''}`}
-                    aria-label="Sector"
-                    value={filters.sector}
-                    onChange={(e) => setFilters((f) => ({ ...f, sector: e.target.value }))}
-                >
-                    <option value="">All sectors</option>
-                    {sectors.map((s) => (
-                        <option key={s} value={s}>{s}</option>
+                    <Link href={route('submit')} className="ghost tb-add">
+                        <span aria-hidden="true" className="text-base leading-none" style={{ color: 'var(--marigold)' }}>+</span>
+                        Add an opening
+                    </Link>
+                </div>
+    
+                {/* filter chips: a wrapping bar on desktop, one swipeable row on phones */}
+                <div className="tb-chips">
+                    {CHIPS.map((chip) => (
+                        <button
+                            key={chip.key}
+                            type="button"
+                            className={`chip ${filters[chip.key] ? 'on' : ''}`}
+                            data-k={chip.key}
+                            aria-pressed={filters[chip.key]}
+                            onClick={() => toggleChip(chip.key)}
+                        >
+                            <span className="dot" aria-hidden="true" />
+                            {chip.label}
+                        </button>
                     ))}
-                </select>
-
-                <select
-                    className={`khm-select ${filters.type ? 'set' : ''}`}
-                    aria-label="Company type"
-                    value={filters.type}
-                    onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value }))}
-                >
-                    <option value="">All company types</option>
-                    {types.map((t) => (
-                        <option key={t} value={t}>{t}</option>
+    
+                    <select
+                        className={`khm-select ${filters.sector ? 'set' : ''}`}
+                        aria-label="Sector"
+                        value={filters.sector}
+                        onChange={(e) => setFilters((f) => ({ ...f, sector: e.target.value }))}
+                    >
+                        <option value="">All sectors</option>
+                        {sectors.map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                        ))}
+                    </select>
+    
+                    <select
+                        className={`khm-select ${filters.type ? 'set' : ''}`}
+                        aria-label="Company type"
+                        value={filters.type}
+                        onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value }))}
+                    >
+                        <option value="">All company types</option>
+                        {types.map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                        ))}
+                    </select>
+    
+                    <select
+                        className={`khm-select ${filters.exp ? 'set' : ''}`}
+                        aria-label="Experience"
+                        value={filters.exp}
+                        onChange={(e) => setFilters((f) => ({ ...f, exp: e.target.value }))}
+                    >
+                        <option value="">Any experience</option>
+                        {experienceBuckets.map((exp) => (
+                            <option key={exp} value={exp}>{exp}</option>
+                        ))}
+                    </select>
+    
+                    {sheetPills.map((pill) => (
+                        <button
+                            key={pill.key}
+                            type="button"
+                            className="chip pill-set"
+                            onClick={() => setFilters((f) => ({ ...f, [pill.key]: '' }))}
+                            aria-label={`Remove filter ${pill.label}`}
+                        >
+                            {pill.label}
+                            <span aria-hidden="true" className="x">✕</span>
+                        </button>
                     ))}
-                </select>
-
-                <select
-                    className={`khm-select ${filters.exp ? 'set' : ''}`}
-                    aria-label="Experience"
-                    value={filters.exp}
-                    onChange={(e) => setFilters((f) => ({ ...f, exp: e.target.value }))}
-                >
-                    <option value="">Any experience</option>
-                    {experienceBuckets.map((exp) => (
-                        <option key={exp} value={exp}>{exp}</option>
-                    ))}
-                </select>
-
-                <button type="button" className="chip ml-auto" onClick={resetFilters} disabled={!activeFilterCount && !selectedId}>
-                    Reset
-                    {activeFilterCount > 0 && <span className="chip-count">{activeFilterCount}</span>}
-                </button>
+    
+                    <button type="button" className="chip reset" onClick={resetFilters} disabled={!activeFilterCount && !selectedId}>
+                        Reset
+                        {activeFilterCount > 0 && <span className="chip-count">{activeFilterCount}</span>}
+                    </button>
+                </div>
             </div>
 
             {/* shell */}
             <div className="relative flex-1">
                 <div ref={mapEl} className="absolute inset-0" />
 
+                {/* phones: dims the map behind an open panel; tap to close */}
+                <div
+                    className={`m-backdrop ${railOpenMobile || filtersOpen || selected ? 'show' : ''}`}
+                    onClick={() => {
+                        setRailOpenMobile(false);
+                        setFiltersOpen(false);
+                        setSelectedId(null);
+                    }}
+                    aria-hidden="true"
+                />
+
+                {/* phones: every filter in one slide-up panel */}
+                <section className={`fsheet ${filtersOpen ? 'show' : ''}`} aria-label="Filters" aria-hidden={!filtersOpen}>
+                    <div className="grab" aria-hidden="true" />
+                    <div className="fs-hd">
+                        <h2>Filters</h2>
+                        <button type="button" className="fs-x" onClick={() => setFiltersOpen(false)} aria-label="Close filters">
+                            ✕
+                        </button>
+                    </div>
+                    <div className="fs-body">
+                        <FilterGroup title="Show only">
+                            {CHIPS.map((chip) => (
+                                <button
+                                    key={chip.key}
+                                    type="button"
+                                    className={`opt ${filters[chip.key] ? 'on' : ''}`}
+                                    aria-pressed={filters[chip.key]}
+                                    onClick={() => toggleChip(chip.key)}
+                                >
+                                    {chip.label}
+                                </button>
+                            ))}
+                        </FilterGroup>
+                        <FilterGroup title="Experience">
+                            <Options value={filters.exp} options={experienceBuckets} anyLabel="Any" onChange={(v) => setFilters((f) => ({ ...f, exp: v }))} />
+                        </FilterGroup>
+                        <FilterGroup title="Sector">
+                            <Options value={filters.sector} options={sectors} anyLabel="All" onChange={(v) => setFilters((f) => ({ ...f, sector: v }))} />
+                        </FilterGroup>
+                        <FilterGroup title="Company type">
+                            <Options value={filters.type} options={types} anyLabel="All" onChange={(v) => setFilters((f) => ({ ...f, type: v }))} />
+                        </FilterGroup>
+                    </div>
+                    <div className="fs-ft">
+                        <button type="button" className="fs-reset" onClick={resetFilters} disabled={!activeFilterCount}>
+                            Reset all
+                        </button>
+                        <button type="button" className="fs-go" onClick={() => setFiltersOpen(false)}>
+                            Show {totalJobs} role{totalJobs === 1 ? '' : 's'}
+                        </button>
+                    </div>
+                </section>
+
                 <aside className={`rail ${railOpenMobile ? 'khm-rail-mobile-open' : ''}`}>
+                    <div className="grab" aria-hidden="true" />
                     <h2>Hiring by area</h2>
                     <div className="scroll">
                         {railRows.map((row) => (
@@ -519,6 +637,7 @@ export default function HiringMap({ companies, areas, sectors, types, experience
                 <section className={`sheet ${selected ? 'show' : ''}`}>
                     {selected && (
                         <>
+                            <div className="grab" aria-hidden="true" />
                             <div className="hd">
                                 {logoFor(selected) && (
                                     <img
@@ -604,11 +723,17 @@ export default function HiringMap({ companies, areas, sectors, types, experience
 
                 <button
                     type="button"
-                    className={`khm-mob ${selected ? 'hidden-by-sheet' : ''}`}
-                    onClick={() => setRailOpenMobile((v) => !v)}
+                    className={`khm-mob ${selected || filtersOpen || railOpenMobile ? 'hidden-by-sheet' : ''}`}
+                    onClick={() => setRailOpenMobile(true)}
                     aria-expanded={railOpenMobile}
                 >
-                    {railOpenMobile ? '✕ Close' : '☰ Areas'}
+                    <span className="pulse-dot" aria-hidden="true" />
+                    <b>{totalJobs}</b> open role{totalJobs === 1 ? '' : 's'}
+                    <span className="sep" aria-hidden="true" />
+                    Browse areas
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="m6 15 6-6 6 6" />
+                    </svg>
                 </button>
             </div>
         </div>

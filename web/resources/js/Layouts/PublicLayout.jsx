@@ -57,7 +57,7 @@ export default function PublicLayout({ title, description, image, fullHeight = f
     const canonical = typeof window !== 'undefined' ? `${window.location.origin}${url}` : undefined;
 
     return (
-        <div className={fullHeight ? 'flex h-screen flex-col overflow-hidden' : 'min-h-screen'}>
+        <div className={fullHeight ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-screen'}>
             <Head>
                 <title>{fullTitle}</title>
                 <meta name="description" content={desc} />
