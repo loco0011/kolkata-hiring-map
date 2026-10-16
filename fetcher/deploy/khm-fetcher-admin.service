@@ -1,0 +1,17 @@
+# Optional: serves the fetcher's history admin on 127.0.0.1:8001 only.
+# Reach it with an SSH tunnel: ssh -L 8001:127.0.0.1:8001 you@your-vps
+# Edit User and the paths, then:
+#   sudo cp khm-fetcher-admin.service /etc/systemd/system/
+#   sudo systemctl enable --now khm-fetcher-admin
+[Unit]
+Description=Kolkata Hiring Map fetcher admin (gunicorn)
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/var/www/kolkata-hiring-map/fetcher
+ExecStart=/var/www/kolkata-hiring-map/fetcher/.venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8001 --workers 2
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

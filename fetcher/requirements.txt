@@ -1,0 +1,7 @@
+Django~=5.2.0
+requests~=2.32
+dj-database-url~=2.3
+python-dotenv~=1.1
+gunicorn~=23.0
+whitenoise~=6.9
+# For MySQL instead of the default SQLite file, also install: mysqlclient~=2.2
