@@ -108,11 +108,14 @@ LOGGING = {
 # --- The Laravel site this service feeds ---
 LARAVEL_BASE_URL = os.environ.get("LARAVEL_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
 INGEST_API_TOKEN = os.environ.get("INGEST_API_TOKEN", "")
+# The site's public address, for the bot's User-Agent. Differs from
+# LARAVEL_BASE_URL under Docker, where that is the internal http://caddy:8080.
+SITE_URL = os.environ.get("SITE_URL", LARAVEL_BASE_URL).rstrip("/")
 
 # --- Fetching ---
 FETCHER_USER_AGENT = os.environ.get(
     "FETCHER_USER_AGENT",
-    f"Mozilla/5.0 (compatible; KolkataHiringMapBot/1.0; +{LARAVEL_BASE_URL}/about)",
+    f"Mozilla/5.0 (compatible; KolkataHiringMapBot/1.0; +{SITE_URL}/about)",
 )
 FETCH_DELAY_SECONDS = float(os.environ.get("FETCH_DELAY_SECONDS", "1.0"))
 CHECK_DELAY_SECONDS = float(os.environ.get("CHECK_DELAY_SECONDS", "0.5"))

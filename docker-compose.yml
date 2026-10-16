@@ -1,0 +1,126 @@
+# Kolkata Hiring Map — the whole stack on one machine.
+#
+#   cp .env.example .env               # and fill it in (see DEPLOY.md)
+#   docker compose up -d --build
+#
+# Services:
+#   caddy      web server, the only thing exposed to the internet (HTTPS)
+#   app        Laravel on PHP-FPM; runs migrations when it starts
+#   scheduler  Laravel's scheduler (same image as app)
+#   mysql      MariaDB, data kept in the `mysql_data` volume
+#   fetcher    Python job fetcher + nightly link check (supercronic)
+#   fetcher-admin  optional history admin: docker compose --profile admin up -d
+
+x-laravel: &laravel
+  build:
+    context: ./web
+    target: app
+  image: khm-app
+  restart: unless-stopped
+  env_file: ./web/.env
+  environment: &laravel-env
+    APP_URL: ${APP_URL:?set APP_URL in .env}
+    DB_CONNECTION: mysql
+    DB_HOST: mysql
+    DB_PORT: "3306"
+    DB_DATABASE: ${DB_DATABASE:?set DB_DATABASE in .env}
+    DB_USERNAME: ${DB_USERNAME:?set DB_USERNAME in .env}
+    DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    INGEST_API_TOKEN: ${INGEST_API_TOKEN:?set INGEST_API_TOKEN in .env}
+    # The fetcher container does the nightly link check
+    LINK_CHECKER: python
+    # Logs go to `docker compose logs`
+    LOG_CHANNEL: stderr
+  volumes:
+    - laravel_storage:/app/storage
+  depends_on:
+    mysql:
+      condition: service_healthy
+
+services:
+  caddy:
+    build:
+      context: ./web
+      target: caddy
+    image: khm-caddy
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+  app:
+    <<: *laravel
+    environment:
+      <<: *laravel-env
+      RUN_MIGRATIONS: "true"
+
+  scheduler:
+    <<: *laravel
+    command: ["php", "artisan", "schedule:work"]
+    depends_on:
+      app:
+        condition: service_started
+
+  mysql:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${DB_DATABASE:?set DB_DATABASE in .env}
+      MARIADB_USER: ${DB_USERNAME:?set DB_USERNAME in .env}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  fetcher:
+    build: ./fetcher
+    image: khm-fetcher
+    restart: unless-stopped
+    env_file: ./fetcher/.env
+    environment: &fetcher-env
+      # Internal address that only serves /api/ingest (see web/docker/Caddyfile)
+      LARAVEL_BASE_URL: http://caddy:8080
+      SITE_URL: ${APP_URL:?set APP_URL in .env}
+      INGEST_API_TOKEN: ${INGEST_API_TOKEN:?set INGEST_API_TOKEN in .env}
+      # Fetch history, in the fetcher_data volume
+      DATABASE_URL: sqlite:////data/db.sqlite3
+    volumes:
+      - fetcher_data:/data
+    depends_on:
+      - caddy
+
+  fetcher-admin:
+    image: khm-fetcher
+    profiles: ["admin"]
+    restart: unless-stopped
+    env_file: ./fetcher/.env
+    environment:
+      <<: *fetcher-env
+      ALLOWED_HOSTS: 127.0.0.1,localhost
+    command: ["gunicorn", "config.wsgi", "--bind", "0.0.0.0:8001", "--workers", "2"]
+    # Only reachable from the machine itself; from your PC use an SSH tunnel
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - fetcher_data:/data
+    depends_on:
+      - fetcher
+
+volumes:
+  caddy_data:
+  caddy_config:
+  laravel_storage:
+  mysql_data:
+  fetcher_data:

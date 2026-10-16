@@ -1,0 +1,33 @@
+# Web server for the Laravel site. PHP goes to the `app` container (PHP-FPM).
+
+(laravel) {
+	root * /app/public
+	encode zstd gzip
+	php_fastcgi app:9000
+	file_server
+}
+
+# The public site. SITE_ADDRESS is ":80" for plain HTTP (local, or behind
+# another proxy) or your domain, e.g. "hiringmap.in" — Caddy then gets and
+# renews a Let's Encrypt certificate by itself.
+{$SITE_ADDRESS::80} {
+	# The ingest API is only for the fetcher, which uses the internal
+	# address below. Hide it from the internet.
+	@ingest path /api/ingest /api/ingest/*
+	respond @ingest 404
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	import laravel
+}
+
+# Internal address for the fetcher (http://caddy:8080). Not published to the
+# host, so only containers on the Compose network can reach it.
+:8080 {
+	@notIngest not path /api/ingest /api/ingest/*
+	respond @notIngest 404
+	import laravel
+}

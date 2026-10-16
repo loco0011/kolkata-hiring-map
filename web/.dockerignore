@@ -1,0 +1,25 @@
+# Built inside the image instead
+/vendor
+/node_modules
+/public/build
+/public/hot
+/public/storage
+
+# Secrets and local state never go into the image
+.env
+.env.*
+!.env.example
+!.env.production.example
+/storage/*.key
+/storage/logs/*
+/storage/framework/cache/data/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+/storage/framework/testing/*
+!/storage/**/.gitignore
+/bootstrap/cache/*.php
+.phpunit.result.cache
+/.phpunit.cache
+/tests
+Dockerfile
+.dockerignore

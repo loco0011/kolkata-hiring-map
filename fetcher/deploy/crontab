@@ -1,0 +1,8 @@
+# Schedule for the fetcher container (supercronic). Times are UTC.
+# Change it, then: docker compose up -d --build fetcher
+
+# 02:30 IST — new jobs from job boards / careers pages → /dashboard pending submissions
+30 21 * * * python manage.py fetch_jobs
+
+# 03:30 IST — nightly link check (Compose sets LINK_CHECKER=python for the site)
+0 22 * * * python manage.py check_links

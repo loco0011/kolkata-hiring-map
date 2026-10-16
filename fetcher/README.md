@@ -54,7 +54,7 @@ company's job board link and the provider + token fill in automatically:
   Most Kolkata employers use the last four (Indian HR suites) rather than the
   first five. Those four don't publish an official API: the adapters read the
   same feed each careers site loads in the browser, so a vendor redesign can
-  break one — `logs/fetch.log` will show the error for that company.
+  break one — `docker compose logs fetcher` shows the error for that company.
 
 - or just `careers_url` — the fetcher reads any schema.org `JobPosting` data
   embedded in that page (the markup Google for Jobs uses). Pages without it
@@ -75,76 +75,36 @@ forbid it.
 
 ---
 
-## Set up on the VPS
+## Running it
 
-Assumes Ubuntu/Debian with the Laravel site already deployed, and this folder
-at `/var/www/kolkata-hiring-map/fetcher` (adjust paths to yours).
+It runs as the `fetcher` service in the project's Docker Compose stack — setup
+is in [../DEPLOY.md](../DEPLOY.md). Only `SECRET_KEY` needs setting in
+`fetcher/.env`; Compose supplies the site address (`http://caddy:8080`, an
+internal address that serves only `/api/ingest`), the shared `INGEST_API_TOKEN`
+and the history database (SQLite in the `fetcher_data` volume).
 
-### 1. Install
-
-```bash
-sudo apt install python3 python3-venv
-cd /var/www/kolkata-hiring-map/fetcher
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-cp .env.example .env
-```
-
-### 2. Configure
-
-Generate two secrets:
+The container runs [supercronic](https://github.com/aptible/supercronic) with
+[`deploy/crontab`](deploy/crontab): `fetch_jobs` at 02:30 IST and `check_links`
+at 03:30 IST. Compose sets `LINK_CHECKER=python` on the site so Laravel's own
+`postings:check` stays off and dead links don't get two strikes a night.
 
 ```bash
-.venv/bin/python -c "import secrets; print(secrets.token_urlsafe(50))"   # → SECRET_KEY
-.venv/bin/python -c "import secrets; print(secrets.token_urlsafe(40))"   # → INGEST_API_TOKEN
-```
-
-- `fetcher/.env`: `SECRET_KEY`, `LARAVEL_BASE_URL=https://your-domain`, `INGEST_API_TOKEN`
-- Laravel `.env`: the **same** `INGEST_API_TOKEN`, and `LINK_CHECKER=python`
-  if the fetcher should do the link check. Then `php artisan config:cache`.
-
-### 3. Database
-
-```bash
-.venv/bin/python manage.py migrate
-.venv/bin/python manage.py collectstatic --noinput
-.venv/bin/python manage.py createsuperuser      # for the history admin
-```
-
-SQLite (the default `db.sqlite3` file) is plenty — it only stores fetch history.
-
-### 4. Try it
-
-```bash
-.venv/bin/python manage.py fetch_jobs --dry-run     # fetch + print, send nothing
-.venv/bin/python manage.py fetch_jobs               # for real
-.venv/bin/python manage.py check_links
+docker compose exec fetcher python manage.py fetch_jobs --dry-run   # fetch + print, send nothing
+docker compose exec fetcher python manage.py fetch_jobs             # for real
+docker compose exec fetcher python manage.py check_links
+docker compose logs -f fetcher                                      # what the nightly runs did
 ```
 
 Options: `fetch_jobs --company acme`, `--provider lever`, `--delay 2`.
 
-### 5. Cron
+### History admin (optional)
 
-`crontab -e` as the user that owns the app (see `deploy/crontab.example`):
-
-```
-# fetch new jobs at 02:30, link check at 03:30 (server time)
-30 2 * * * cd /var/www/kolkata-hiring-map/fetcher && .venv/bin/python manage.py fetch_jobs >> logs/fetch.log 2>&1
-30 3 * * * cd /var/www/kolkata-hiring-map/fetcher && .venv/bin/python manage.py check_links >> logs/check.log 2>&1
-```
-
-(`mkdir logs` first.) Keep Laravel's `* * * * * php artisan schedule:run`
-entry too. With `LINK_CHECKER=python` it simply stops running
-`postings:check`, so dead links don't get two strikes a night.
-
-### 6. History admin (optional)
-
-Every run and every job it saw is browsable in the Django admin. It doesn't need
-to be public — run it on localhost and reach it over an SSH tunnel:
+Every run and every job it saw is browsable in the Django admin. It only
+listens on the server itself (127.0.0.1:8001); reach it over an SSH tunnel:
 
 ```bash
-sudo cp deploy/khm-fetcher-admin.service /etc/systemd/system/   # edit paths/user first
-sudo systemctl enable --now khm-fetcher-admin
+docker compose exec fetcher python manage.py createsuperuser   # once
+docker compose --profile admin up -d fetcher-admin
 # from your PC:
 ssh -L 8001:127.0.0.1:8001 you@your-vps     # then open http://localhost:8001/admin/
 ```
@@ -152,8 +112,8 @@ ssh -L 8001:127.0.0.1:8001 you@your-vps     # then open http://localhost:8001/ad
 ## Checking it works
 
 - `/dashboard` → Pending submissions shows `auto · …` items after a fetch.
-- With `LINK_CHECKER=python`, "Last link check …" on `/dashboard` updates every morning.
-- `logs/fetch.log` lists any company whose board failed (wrong token, site down).
+- "Last link check …" on `/dashboard` updates every morning.
+- `docker compose logs fetcher` lists any company whose board failed (wrong token, site down).
 
 ## Development
 
@@ -162,11 +122,10 @@ python -m venv .venv && .venv/bin/pip install -r requirements.txt
 DEBUG=true .venv/bin/python manage.py test
 ```
 
-No Python on your PC? Use Docker:
+No Python on your PC? Use the Docker image:
 
 ```bash
-docker run --rm -v "$PWD:/app" -w /app -e DEBUG=true python:3.12-slim \
-  sh -c "pip install -q -r requirements.txt && python manage.py test"
+docker compose run --rm -e DEBUG=true fetcher python manage.py test
 ```
 
 | File | What it is |
@@ -176,4 +135,4 @@ docker run --rm -v "$PWD:/app" -w /app -e DEBUG=true python:3.12-slim \
 | `ingest/linkcheck.py` | Link probe (keep `DEAD_PHRASES` in sync with `CheckJobPostings.php`) |
 | `ingest/services.py` | The fetch and link-check runs |
 | `ingest/laravel.py` | Client for the site's `/api/ingest/*` |
-| Laravel `app/Http/Controllers/IngestController.php` | The other end of that API |
+| `../web/app/Http/Controllers/IngestController.php` | The other end of that API |

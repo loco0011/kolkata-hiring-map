@@ -2,24 +2,24 @@
 
 ## What is a cron job?
 
-A cron job is a timer on the hosting server that runs a command automatically
+A cron job is a timer that runs a command automatically
 on a schedule — like an alarm clock for the server.
 
 ## What it does in this project
 
-The cron entry runs this every minute:
+Under Docker there is no server crontab to set up. Two containers keep time
+themselves:
 
-```
-php artisan schedule:run
-```
+| Container | Schedule | Runs |
+|---|---|---|
+| `fetcher` | 02:30 IST | `python manage.py fetch_jobs` — new jobs into `/dashboard` pending submissions |
+| `fetcher` | **03:30 IST** | `python manage.py check_links` — the link checker |
+| `scheduler` | every minute | `php artisan schedule:run` — Laravel's own schedule |
 
-That asks Laravel "is anything due right now?". Almost every minute the answer
-is no and it exits in a fraction of a second. Once a day at **3:30 AM** the
-answer is yes, and it runs the link checker:
-
-```
-php artisan postings:check
-```
+The fetcher's times are in [`fetcher/deploy/crontab`](fetcher/deploy/crontab)
+(written in UTC). Laravel also has a link checker, `php artisan postings:check`;
+Compose sets `LINK_CHECKER=python`, so only the fetcher's runs and a dead link
+gets one strike a night, not two.
 
 The link checker visits every live job posting's link:
 
@@ -41,52 +41,20 @@ With it, working postings stay up and dead ones are removed automatically.
 
 ## How to set it up
 
-Most PHP hosts (cPanel, Hostinger, etc.) have a **"Cron Jobs"** section in the
-control panel. Add one entry:
-
-- **Schedule:** every minute — `* * * * *`
-- **Command:**
-
-  ```
-  cd /path/to/your/app && php artisan schedule:run >> /dev/null 2>&1
-  ```
-
-Replace `/path/to/your/app` with the folder the project lives in on the server
-(the one containing `artisan`).
-
-### If your host doesn't allow every-minute cron
-
-Skip the scheduler and run the link checker directly once a day instead:
-
-```
-30 3 * * * cd /path/to/your/app && php artisan postings:check >> /dev/null 2>&1
-```
-
-### If `php` isn't found
-
-Some hosts need the full path to PHP, e.g. `/usr/local/bin/php` or
-`/opt/cpanel/ea-php83/root/usr/bin/php`. Your host's docs or support can tell
-you the right one.
-
-### Handing the link check to the Python fetcher
-
-If the Python fetcher (`fetcher/`) is set up, it can run the same check
-(`python manage.py check_links`) and report results back to the site. Set
-`LINK_CHECKER=python` in the Laravel `.env` so `schedule:run` stops running
-`postings:check`; otherwise every dead link gets two strikes a night. Keep the
-`schedule:run` cron entry either way. The fetcher's own cron entries are in
-[fetcher/README.md](fetcher/README.md).
+Nothing to do beyond `docker compose up -d` ([DEPLOY.md](DEPLOY.md)). To change
+the times, edit `fetcher/deploy/crontab` and run
+`docker compose up -d --build fetcher`.
 
 ## Checking that it works
 
 - The day after setting it up, open `/dashboard`. It should say
   **"Last link check … N checked, M closed"**.
-- If it still says the check has never run, the cron entry isn't working —
-  check the path to the app and to PHP.
+- If it still says the check has never run, look at the fetcher's log:
+  `docker compose logs fetcher`.
 - You can always run it by hand over SSH to see the output:
 
   ```
-  php artisan postings:check
+  docker compose exec fetcher python manage.py check_links
   ```
 
 ## Things the check can't do

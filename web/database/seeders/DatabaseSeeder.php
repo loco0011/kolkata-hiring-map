@@ -23,11 +23,11 @@ class DatabaseSeeder extends Seeder
         $password = env('ADMIN_PASSWORD') ?: Str::password(20);
 
         if (! User::where('email', $email)->exists()) {
-            User::factory()->create([
-                'name' => 'Admin',
-                'email' => $email,
-                'password' => Hash::make($password),
-            ])->forceFill(['is_admin' => true])->save();
+            // Not User::factory(): factories need Faker, a dev-only package that
+            // isn't installed in production (composer install --no-dev).
+            (new User(['name' => 'Admin', 'email' => $email, 'password' => Hash::make($password)]))
+                ->forceFill(['is_admin' => true, 'email_verified_at' => now()])
+                ->save();
 
             if (! env('ADMIN_PASSWORD')) {
                 $this->command?->warn("Admin created: {$email} / {$password}  — save this now, it won't be shown again.");

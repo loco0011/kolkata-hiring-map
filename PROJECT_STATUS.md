@@ -14,10 +14,11 @@ candidate accounts. Every role links out to where it was actually posted.
 
 | Layer | What we use | Notes |
 |---|---|---|
-| Backend | Laravel 12 (PHP) | Runs on a VPS. No Node at runtime |
-| Job fetcher | Python 3.12 + Django 5.2 (`fetcher/`) | Separate service on the same VPS. Talks to Laravel through `/api/ingest/*` — see [fetcher/README.md](fetcher/README.md) |
-| Frontend | Inertia.js + React 18 + Tailwind | Built locally with `npm run build`; `public/build/` is uploaded |
-| Database | MySQL (XAMPP locally) | Tests run on in-memory SQLite |
+| Backend | Laravel 12 (PHP), in `web/` | PHP-FPM behind Caddy (automatic HTTPS) |
+| Hosting | Docker Compose on one VPS | Services: caddy, app, scheduler, mysql, fetcher — see [DEPLOY.md](DEPLOY.md) |
+| Job fetcher | Python 3.12 + Django 5.2 (`fetcher/`) | Its own container. Talks to Laravel over the private Docker network through `/api/ingest/*` — see [fetcher/README.md](fetcher/README.md) |
+| Frontend | Inertia.js + React 18 + Tailwind | Built inside the Docker image (`npm run build`) |
+| Database | MariaDB container (XAMPP MySQL also works for local dev) | Tests run on in-memory SQLite |
 | Map | Leaflet + Esri Canvas tiles + marker clustering | Esri tiles need no API key |
 | Fonts | Anek Latin (headings), Manrope (body) | Google Fonts |
 
@@ -111,7 +112,8 @@ adapter, Kolkata filter, link probe, fetch and check runs. All passing.
 
 ## 4. The cron job (required)
 
-A cron job is a timer on the server that runs a command on a schedule.
+A cron job is a timer that runs a command on a schedule. Under Docker the
+containers keep the schedule themselves — no server crontab.
 
 **Why it's required:** the site only shows postings confirmed live within the
 last **21 days**. The nightly link check is what re-confirms them. Without the
@@ -125,13 +127,7 @@ cron job, **every posting disappears about 3 weeks after launch**.
 | 404 / "no longer accepting applications" | One strike; **two nights in a row → closed** |
 | Blocked / timeout / server error | No change; shows on dashboard for a manual check if it persists |
 
-**Setup** — in your hosting panel's "Cron Jobs" section, add:
-
-```
-* * * * * cd /path/to/your/app && php artisan schedule:run >> /dev/null 2>&1
-```
-
-If only daily cron is allowed: `30 3 * * * cd /path/to/your/app && php artisan postings:check >> /dev/null 2>&1`
+**Setup** — none. The `fetcher` container runs the link check at 03:30 IST (and the job fetch at 02:30); the `scheduler` container runs Laravel's schedule.
 
 **Check it works:** next day, `/dashboard` shows "Last link check … N checked".
 
@@ -141,17 +137,13 @@ Full details and troubleshooting: [CRON.md](CRON.md).
 
 ## 5. What's left before launch — only you can do these
 
-- [ ] **Server `.env`** from `.env.production.example`:
-  - `APP_ENV=production`, **`APP_DEBUG=false`** (critical — `true` exposes code and config on errors)
-  - `APP_URL=https://your-domain`, `APP_KEY` (`php artisan key:generate`)
-  - MySQL credentials
-  - Real SMTP mail settings (otherwise password-reset emails never send)
-- [ ] **Upload** code + `public/build/` (make sure `public/hot` is **not** uploaded)
-- [ ] **Run on server:** `composer install --no-dev`, `migrate --force`, `db:seed --force`, `seed:verified`, `config:cache`, `route:cache`, `view:cache`
+- [ ] **VPS with Docker** (2 GB RAM), domain DNS pointing at it, ports 80/443 open
+- [ ] **Three settings files:** `.env` (domain, DB passwords, `INGEST_API_TOKEN`), `web/.env` from `web/.env.production.example` (**`APP_DEBUG=false`**, `APP_KEY`, real SMTP), `fetcher/.env` (`SECRET_KEY`)
+- [ ] **`docker compose up -d --build`**, then `db:seed --force` and `seed:verified` inside `app`
 - [ ] **Admin account:** set `ADMIN_EMAIL` / `ADMIN_PASSWORD` before seeding (or note the printed random password); remove `ADMIN_PASSWORD` afterwards
-- [ ] **Cron job** (§4)
+- [ ] **Backups:** daily database dump (DEPLOY.md §6)
 - [ ] **Log in, open `/dashboard`**, confirm it loads
-- [ ] **Git repo** — commit everything once the repo is shared
+- [x] **Git repo** — https://github.com/loco0011/kolkata-hiring-map
 
 Step-by-step commands: [DEPLOY.md](DEPLOY.md).
 
@@ -200,23 +192,27 @@ Step-by-step commands: [DEPLOY.md](DEPLOY.md).
 ## 9. Useful commands
 
 ```bash
-# local development
+# the whole stack (from the repo root)
+docker compose up -d --build           # start / deploy
+docker compose logs -f app             # logs (or caddy, fetcher, scheduler)
+docker compose exec app php artisan …  # any artisan command below, on the server
+
+# local development without Docker (cd web)
 php artisan serve              # Laravel on :8000
 npm run dev                    # Vite hot reload
-npm run build                  # production assets → public/build
 php artisan test               # run all tests
 
 # database
-php artisan migrate            # apply new migrations
+php artisan migrate            # apply new migrations (the app container does this on start)
 php artisan db:seed            # areas + admin account
 php artisan seed:verified      # verified companies + postings (safe to re-run)
 
 # admin
 php artisan admin:make you@example.com   # give admin access / reset password
 
-# freshness
-php artisan postings:check     # run the link check now
-php artisan schedule:list      # show scheduled tasks
+# freshness and new jobs (fetcher container)
+docker compose exec fetcher python manage.py check_links   # run the link check now
+docker compose exec fetcher python manage.py fetch_jobs    # fetch new jobs now
 ```
 
 ---
@@ -225,14 +221,16 @@ php artisan schedule:list      # show scheduled tasks
 
 | File | Purpose |
 |---|---|
+| `docker-compose.yml` | All the services and how they connect |
 | `DEPLOY.md` | Step-by-step deploy guide |
 | `CRON.md` | Cron job explained + troubleshooting |
 | `PROGRESS.md` | Detailed build history and decisions |
-| `.env.production.example` | Server config template |
-| `app/Console/Commands/CheckJobPostings.php` | Nightly link checker |
-| `app/Console/Commands/SeedVerifiedCompanies.php` | The verified company/posting data + sources |
-| `app/Http/Controllers/AdminController.php` | Moderation dashboard backend |
-| `resources/js/Components/HiringMap.jsx` | The map |
-| `resources/js/Pages/Dashboard.jsx` | Moderation dashboard UI |
-| `resources/css/app.css` | Theme colours and all shared UI styles |
-| `routes/web.php`, `routes/console.php` | Pages / scheduled tasks |
+| `.env.example`, `web/.env.production.example`, `fetcher/.env.example` | Server config templates |
+| `web/Dockerfile`, `web/docker/Caddyfile`, `fetcher/Dockerfile` | Images and web server config |
+| `web/app/Console/Commands/CheckJobPostings.php` | Nightly link checker |
+| `web/app/Console/Commands/SeedVerifiedCompanies.php` | The verified company/posting data + sources |
+| `web/app/Http/Controllers/AdminController.php` | Moderation dashboard backend |
+| `web/resources/js/Components/HiringMap.jsx` | The map |
+| `web/resources/js/Pages/Dashboard.jsx` | Moderation dashboard UI |
+| `web/resources/css/app.css` | Theme colours and all shared UI styles |
+| `web/routes/web.php`, `web/routes/console.php` | Pages / scheduled tasks |
