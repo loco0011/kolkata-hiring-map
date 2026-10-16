@@ -10,6 +10,55 @@ import { logoFor } from '@/lib/format';
 const KOLKATA_CENTER = [22.558, 88.415];
 const DEFAULT_ZOOM = 12;
 
+// Small building, used for companies that are on the map but not hiring right now
+const BUILDING_PATHS = 'M3 14V3.5L9 2v12M9 14V6.5l4.5 1.5V14M1.5 14h13M5 5.5h1.5M5 8h1.5M5 10.5h1.5';
+const BUILDING_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="${BUILDING_PATHS}"/></svg>`;
+// Hover card above the pin, or below it when the pin is near the top of the map
+// (the card is ~190px tall). Registered before bindTooltip so it runs first.
+function attachTip(map, marker, html) {
+    marker.on('mouseover', () => {
+        const tip = marker.getTooltip();
+        if (!tip) return;
+        const below = map.latLngToContainerPoint(marker.getLatLng()).y < 220;
+        tip.options.direction = below ? 'bottom' : 'top';
+        tip.options.offset = below ? [0, 14] : [0, -14];
+    });
+    marker.bindTooltip(html, { direction: 'top', offset: [0, -14], className: 'khm-tip', opacity: 1 });
+}
+
+const esc = (s) =>
+    String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+
+// Hover card for a company pin: logo, name, where, and what's open.
+function companyTip(company, jobs, areaLabel) {
+    const logo = logoFor(company);
+    const initial = esc((company.name || '?').trim().charAt(0).toUpperCase());
+    const where = [company.sector, areaLabel].filter(Boolean).map(esc).join(' · ');
+
+    let body;
+    if (jobs.length) {
+        const recent = [...jobs].sort((a, b) => (a.days_ago ?? 999) - (b.days_ago ?? 999));
+        const titles = recent
+            .slice(0, 2)
+            .map((j) => `<li>${esc(j.title)}${j.is_internship ? ' <em>Internship</em>' : ''}</li>`)
+            .join('');
+        const more = jobs.length > 2 ? `<li class="more">+${jobs.length - 2} more</li>` : '';
+        body = `<div class="st on"><i></i>${jobs.length} open role${jobs.length === 1 ? '' : 's'}</div><ul>${titles}${more}</ul>`;
+    } else {
+        body = '<div class="st"><i></i>Not hiring right now</div>';
+    }
+
+    return `<div class="tip ${jobs.length ? 'hiring' : 'idle'}"><div class="hd"><span class="lo">${initial}${logo ? `<img src="${esc(logo)}" alt="" onerror="this.remove()">` : ''}</span><span><b>${esc(company.name)}</b>${where ? `<small>${where}</small>` : ''}</span></div>${body}<div class="cta">Click for details <span aria-hidden="true">→</span></div></div>`;
+}
+
+function BuildingIcon() {
+    return (
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d={BUILDING_PATHS} />
+        </svg>
+    );
+}
+
 function toLPA(n) {
     return (n / 100000).toFixed(1).replace(/\.0$/, '');
 }
@@ -50,12 +99,15 @@ export default function HiringMap({ companies, areas, sectors, types, experience
     const mapEl = useRef(null);
     const mapRef = useRef(null);
     const clusterRef = useRef(null);
+    const idleClusterRef = useRef(null);
     const tileLayerRef = useRef(null);
     const labelLayerRef = useRef(null);
     const [theme] = useTheme();
     const [filters, setFilters] = useState(EMPTY_FILTERS);
     const [selectedId, setSelectedId] = useState(null);
     const [railOpenMobile, setRailOpenMobile] = useState(false);
+    const [showIdle, setShowIdle] = useState(true);
+    const areaLabels = useMemo(() => Object.fromEntries(areas.map((a) => [a.key, a.label])), [areas]);
 
     const q = filters.q.trim().toLowerCase();
 
@@ -122,12 +174,16 @@ export default function HiringMap({ companies, areas, sectors, types, experience
                 count: js.length,
                 internCount: js.filter((j) => j.is_internship).length,
                 companyCount: areaCompanies.length,
+                hiringCount: areaCompanies.filter((c) => jobsOf(c).length > 0).length,
             };
         });
-        return rows.sort((a, b) => b.count - a.count);
+        return rows.sort((a, b) => b.count - a.count || b.companyCount - a.companyCount);
     }, [areas, visibleCompanies, jobsOf]);
 
-    const maxRailCount = Math.max(1, ...railRows.map((r) => r.count));
+    // Bars show each area's share of all open roles, so a quiet map doesn't
+    // draw every area at 100%.
+    const railTotal = Math.max(1, totalJobs);
+    const idleCount = useMemo(() => visibleCompanies.filter((c) => jobsOf(c).length === 0).length, [visibleCompanies, jobsOf]);
 
     const selected = companies.find((c) => c.id === selectedId) ?? null;
     const selectedJobs = selected ? [...jobsOf(selected)].sort((a, b) => (a.days_ago ?? 999) - (b.days_ago ?? 999)) : [];
@@ -138,6 +194,7 @@ export default function HiringMap({ companies, areas, sectors, types, experience
         const map = L.map(mapEl.current, { zoomControl: false, maxZoom: 16 }).setView(KOLKATA_CENTER, DEFAULT_ZOOM);
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
+        // Companies with open roles. Clusters show the total open roles.
         const cluster = L.markerClusterGroup({
             maxClusterRadius: 42,
             spiderfyOnMaxZoom: true,
@@ -147,15 +204,36 @@ export default function HiringMap({ companies, areas, sectors, types, experience
                 const hasInternship = c.getAllChildMarkers().some((m) => m.options.hasInternship);
                 const size = jobCount > 20 ? 46 : jobCount > 8 ? 40 : 34;
                 return L.divIcon({
-                    // a cluster of companies with nothing open shows its company count, muted
-                    className: `cluster${jobCount ? (hasInternship ? ' int' : '') : ' zero'}`,
-                    html: `<div class="b" style="width:${size}px;height:${size}px">${jobCount || c.getChildCount()}</div>`,
+                    className: `cluster${hasInternship ? ' int' : ''}`,
+                    html: `<div class="b" style="width:${size}px;height:${size}px">${jobCount}</div>`,
                     iconSize: [size, size],
                 });
             },
         });
+
+        // Companies on the map but not hiring right now: their own group, in a
+        // pane under the hiring pins, so they never mix into the role counts.
+        map.createPane('idlePane');
+        map.getPane('idlePane').style.zIndex = 590;
+        const idleCluster = L.markerClusterGroup({
+            clusterPane: 'idlePane',
+            maxClusterRadius: 36,
+            spiderfyOnMaxZoom: true,
+            showCoverageOnHover: false,
+            iconCreateFunction: (c) =>
+                L.divIcon({
+                    className: 'cluster idle',
+                    html: `<div class="b">${BUILDING_SVG}<span>${c.getChildCount()}</span></div>`,
+                    iconSize: [44, 26],
+                    // hang just below the point, so a hiring pin in the same spot stays readable
+                    iconAnchor: [22, -8],
+                }),
+        });
+
+        idleCluster.addTo(map);
         cluster.addTo(map);
         clusterRef.current = cluster;
+        idleClusterRef.current = idleCluster;
 
         mapRef.current = map;
 
@@ -194,38 +272,59 @@ export default function HiringMap({ companies, areas, sectors, types, experience
 
     useEffect(() => {
         const cluster = clusterRef.current;
-        if (!cluster) return;
+        const idleCluster = idleClusterRef.current;
+        if (!cluster || !idleCluster) return;
 
         cluster.clearLayers();
+        idleCluster.clearLayers();
 
-        const markers = visibleCompanies.map((company) => {
+        const hiring = [];
+        const idle = [];
+
+        visibleCompanies.forEach((company) => {
             const js = jobsOf(company);
             const count = js.length;
-            const hasInternship = js.some((j) => j.is_internship);
-            const isNew = js.some((j) => j.days_ago != null && j.days_ago <= 3);
             const isSelected = company.id === selectedId;
 
-            const cls = 'pin' + (count ? (hasInternship ? ' int' : '') : ' zero') + (isNew ? ' new' : '') + (isSelected ? ' sel' : '');
+            if (!count) {
+                if (!showIdle && !isSelected) return;
+                const marker = L.marker([company.lat, company.lng], {
+                    pane: 'idlePane',
+                    icon: L.divIcon({
+                        className: 'pin idle' + (isSelected ? ' sel' : ''),
+                        html: `<div class="b">${BUILDING_SVG}</div>`,
+                        iconSize: [22, 22],
+                        iconAnchor: [11, 11],
+                    }),
+                });
+                attachTip(mapRef.current, marker, companyTip(company, js, areaLabels[company.area]));
+                marker.on('click', () => openCompany(company));
+                idle.push(marker);
+                return;
+            }
 
-            const icon = L.divIcon({
-                className: cls,
-                html: `<div class="b">${count || ''}</div>`,
-                iconSize: [28, 28],
-                iconAnchor: [14, 14],
-            });
+            const hasInternship = js.some((j) => j.is_internship);
+            const isNew = js.some((j) => j.days_ago != null && j.days_ago <= 3);
+            const cls = 'pin' + (hasInternship ? ' int' : '') + (isNew ? ' new' : '') + (isSelected ? ' sel' : '');
 
             const marker = L.marker([company.lat, company.lng], {
-                icon,
-                title: company.name,
+                icon: L.divIcon({
+                    className: cls,
+                    html: `<div class="b">${count}</div>`,
+                    iconSize: [28, 28],
+                    iconAnchor: [14, 14],
+                }),
                 jobCount: count,
                 hasInternship,
             });
+            attachTip(mapRef.current, marker, companyTip(company, js, areaLabels[company.area]));
             marker.on('click', () => openCompany(company));
-            return marker;
+            hiring.push(marker);
         });
 
-        cluster.addLayers(markers);
-    }, [visibleCompanies, jobsOf, selectedId]);
+        cluster.addLayers(hiring);
+        idleCluster.addLayers(idle);
+    }, [visibleCompanies, jobsOf, selectedId, showIdle, areaLabels]);
 
     useEffect(() => {
         if (!selectedId && !railOpenMobile) return;
@@ -384,21 +483,29 @@ export default function HiringMap({ companies, areas, sectors, types, experience
                             <button
                                 key={row.key}
                                 type="button"
-                                className={`ar ${filters.area === row.key ? 'on' : ''}`}
+                                className={`ar ${filters.area === row.key ? 'on' : ''} ${row.count ? '' : 'zero'}`}
                                 onClick={() => flyToArea(row)}
                             >
                                 <div className="r1">
                                     <span className="nm">{row.label}</span>
-                                    <span className="ct" style={!row.count ? { color: 'var(--rail-count-zero)' } : undefined}>
-                                        {row.count}
+                                    <span className="ct">
+                                        {row.count ? (
+                                            <>
+                                                <b>{row.count}</b> open role{row.count === 1 ? '' : 's'}
+                                            </>
+                                        ) : (
+                                            'No openings'
+                                        )}
                                     </span>
                                 </div>
                                 <div className="bar">
-                                    <span className="g" style={{ width: `${((row.count - row.internCount) / maxRailCount) * 100}%` }} />
-                                    <span className="o" style={{ width: `${(row.internCount / maxRailCount) * 100}%` }} />
+                                    <span className="g" style={{ width: `${((row.count - row.internCount) / railTotal) * 100}%` }} />
+                                    <span className="o" style={{ width: `${(row.internCount / railTotal) * 100}%` }} />
                                 </div>
                                 <div className="sub">
-                                    {row.companyCount} compan{row.companyCount === 1 ? 'y' : 'ies'}
+                                    {row.count
+                                        ? `${row.hiringCount} of ${row.companyCount} compan${row.companyCount === 1 ? 'y' : 'ies'} hiring`
+                                        : `${row.companyCount} compan${row.companyCount === 1 ? 'y' : 'ies'}`}
                                     {row.internCount ? ` · ${row.internCount} internship${row.internCount > 1 ? 's' : ''}` : ''}
                                 </div>
                             </button>
@@ -473,6 +580,27 @@ export default function HiringMap({ companies, areas, sectors, types, experience
                         </>
                     )}
                 </section>
+
+                <div className="map-legend" aria-label="Map key">
+                    <span className="lg">
+                        <i className="sw hiring">1</i>
+                        Hiring <small>· number = open roles</small>
+                    </span>
+                    {idleCount > 0 && (
+                        <button
+                            type="button"
+                            className={`lg toggle ${showIdle ? '' : 'off'}`}
+                            onClick={() => setShowIdle((v) => !v)}
+                            aria-pressed={showIdle}
+                            title={showIdle ? "Hide companies that aren't hiring" : "Show companies that aren't hiring"}
+                        >
+                            <i className="sw idle">
+                                <BuildingIcon />
+                            </i>
+                            Not hiring now <small>({idleCount})</small>
+                        </button>
+                    )}
+                </div>
 
                 <button
                     type="button"

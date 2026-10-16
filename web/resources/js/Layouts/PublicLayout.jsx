@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, Head, usePage } from '@inertiajs/react';
+import ApplicationLogo from '@/Components/ApplicationLogo';
 import ThemeToggle from '@/Components/ThemeToggle';
 
 const VIEW_LINKS = [
@@ -79,6 +80,7 @@ export default function PublicLayout({ title, description, image, fullHeight = f
                 style={{ background: 'var(--top-bg)', backdropFilter: 'blur(10px)', borderColor: 'var(--edge)' }}
             >
                 <Link href={route('map')} className="mark">
+                    <ApplicationLogo className="mark-logo" aria-hidden="true" />
                     <b>
                         Kolkata <i>Hiring</i> Map
                     </b>
@@ -89,7 +91,7 @@ export default function PublicLayout({ title, description, image, fullHeight = f
                 <span className="flex-1" />
 
                 <nav className="hidden items-center gap-5 text-sm sm:flex" style={{ color: 'var(--nav-mute)' }}>
-                    {NAV_LINKS.map((link) => (
+                    {NAV_LINKS.filter((link) => link.name !== 'submit').map((link) => (
                         <Link
                             key={link.name}
                             href={route(link.name)}
@@ -104,6 +106,13 @@ export default function PublicLayout({ title, description, image, fullHeight = f
                         </Link>
                     ))}
                 </nav>
+
+                <Link href={route('submit')} className="nav-cta hidden sm:inline-flex">
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M8 3v10M3 8h10" />
+                    </svg>
+                    Add a listing
+                </Link>
 
                 <ThemeToggle className="hidden sm:flex" />
 

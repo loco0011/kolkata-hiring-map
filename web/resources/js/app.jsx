@@ -5,7 +5,8 @@ import { createInertiaApp } from '@inertiajs/react';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { createRoot } from 'react-dom/client';
 
-const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
+// The Docker build has no .env, so VITE_APP_NAME is unset there
+const appName = import.meta.env.VITE_APP_NAME || 'Kolkata Hiring Map';
 
 createInertiaApp({
     // PublicLayout already builds "Page — Kolkata Hiring Map"; only suffix bare titles (auth pages)
