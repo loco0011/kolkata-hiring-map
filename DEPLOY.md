@@ -33,6 +33,12 @@ git clone https://github.com/loco0011/kolkata-hiring-map.git
 cd kolkata-hiring-map
 ```
 
+**Shortcut:** `./deploy.sh` does sections 1–3 for you. On a fresh server it
+installs Docker, creates the three `.env` files with generated passwords, keys
+and tokens, and stops so you can set your domain and SMTP. Then
+`./deploy.sh --seed` builds, starts and loads the starting data. After that,
+every update is just `./deploy.sh` (pull, rebuild, restart, prune old images).
+
 ## 2. Settings — three files
 
 ```bash
@@ -121,7 +127,7 @@ Tell the fetcher which companies to scan on `/dashboard` → **Job sources**
 
 | To… | Run |
 |---|---|
-| Deploy a new version | `git pull && docker compose up -d --build` |
+| Deploy a new version | `./deploy.sh` (or `git pull && docker compose up -d --build`) |
 | Apply a changed `.env` / `web/.env` / `fetcher/.env` | `docker compose up -d` |
 | See logs | `docker compose logs -f app` (or `caddy`, `fetcher`, `scheduler`) |
 | Run an artisan command | `docker compose exec app php artisan …` |
